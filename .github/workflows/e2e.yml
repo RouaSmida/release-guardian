@@ -1,0 +1,77 @@
+name: E2E rollback proof
+
+# Proves the core promise on a throwaway kind cluster: a broken release is
+# detected by metric analysis, aborted, and rolled back automatically.
+# Uses the same scripts as the local demo (make up / make demo-bad).
+
+on:
+  workflow_dispatch:
+    inputs:
+      fault_mode:
+        description: How the release is broken
+        type: choice
+        options: [errors, latency]
+        default: errors
+      also_run_good_release:
+        description: Also release a healthy version first (must be promoted)
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "deploy/charts/**"
+      - "deploy/observability/kube-prometheus-stack/**"
+      - "scripts/**"
+      - "Makefile"
+      - ".github/workflows/e2e.yml"
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: broken release is rolled back
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: azure/setup-helm@v4.2.0
+        with:
+          version: v3.16.2
+
+      - name: Install pinned kind and the Argo Rollouts kubectl plugin
+        run: |
+          source scripts/versions.env
+          curl -fsSLo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo kubectl-argo-rollouts \
+            "https://github.com/argoproj/argo-rollouts/releases/download/${ARGO_ROLLOUTS_VERSION}/kubectl-argo-rollouts-linux-amd64"
+          sudo install -m 0755 kind kubectl-argo-rollouts /usr/local/bin/
+          kind version
+
+      - name: Create cluster and deploy version 1
+        run: make up PROFILE=lean
+
+      - name: Release a healthy version (must be promoted)
+        if: inputs.also_run_good_release
+        run: make demo-good
+
+      - name: Release a broken version (must be aborted and rolled back)
+        run: make demo-bad FAULT_MODE=${{ inputs.fault_mode || 'errors' }}
+
+      - name: Collect diagnostics
+        if: always()
+        run: make diagnostics
+
+      - name: Upload logs and rollout status
+        if: always()
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: e2e-diagnostics
+          path: artifacts/
+          retention-days: 14
