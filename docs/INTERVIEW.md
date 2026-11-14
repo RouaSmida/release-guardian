@@ -22,7 +22,7 @@ queries against the canary's pods only: error rate, p95 latency and the
 anomaly score. With `FAULT_MODE=errors` the error rate is far above 2 %; after
 the second failed measurement the AnalysisRun is `Failed`, the Rollout is
 aborted, the canary is scaled to zero and the untouched stable ReplicaSet
-serves everything. In the CI end-to-end run this took about 40 seconds from
+serves everything. In the CI end-to-end runs this takes about a minute from
 the release to the abort.
 
 ### 3. Why a canary and not blue-green or a rolling update?
@@ -60,11 +60,11 @@ only reads the canary's own metrics.
 
 ### 7. What happens if the canary receives no traffic at all?
 
-The queries end with `or on() vector(0)`, so "no data" becomes 0 and the check
-passes. That is fail-open, chosen so a demo cluster does not error on empty
-results, and the demo runs a load generator. For production I would fail
-closed: add a minimum-request-rate condition or mark missing data as
-inconclusive, so an unjudged canary cannot be promoted.
+The release fails. The success condition is `len(result) > 0 && result[0] < limit`,
+so an empty result or `NaN` is a failed measurement and the rollout is aborted
+after the second one. I first built it fail-open and changed it: a canary that
+cannot be judged must not be promoted. The cost is that a service needs
+traffic to be released, which is why the demo runs a load generator.
 
 ### 8. After the rollback, the Rollout shows `Degraded`. Why, and what do you do?
 
@@ -80,8 +80,10 @@ Thresholds are absolute; the detector is relative. A canary at 1.5 % errors or
 300 ms p95 passes "< 2 %" and "< 500 ms" even if the stable version runs at
 0 % and 20 ms. The detector scores how unlike the stable baseline the canary
 is and publishes `release_anomaly_score`; the rollout fails at 0.7.
-In a grossly broken release the error-rate check fires first — the detector
-is slower by design (30 s cycle) and is meant for the subtle cases.
+I should be precise about the evidence: the end-to-end test asserts a non-zero
+score for a slow release (it reached about 0.84), but in those runs the
+threshold checks failed too. The subtle case, where only the anomaly analysis
+objects, is covered by unit tests of the scoring function, not by a cluster test.
 
 ### 10. Explain the Isolation Forest in simple terms. Why did you choose it?
 

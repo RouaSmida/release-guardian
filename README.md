@@ -110,26 +110,28 @@ sequenceDiagram
     end
 ```
 
-This is the output of `make demo-bad` in the
+This is the output of `make demo-bad FAULT_MODE=latency` in an
 [end-to-end workflow](https://github.com/RouaSmida/release-guardian/actions/workflows/e2e.yml)
-(first run on `main`, timestamps removed):
+run on `main` (timestamps removed, repeated lines shortened):
 
 ```text
-==> Releasing api v1 -> v2-broken (FAULT_MODE=errors)
+==> Releasing api v2 -> v3-broken (FAULT_MODE=latency)
     canary steps: 10% -> pause -> 50% -> pause -> 100%
     analysis    : error rate < 2%, p95 latency < 500 ms, anomaly score < 0.7
 
 ==> Watching the rollout
     [  1s] phase=Progressing step=0/4  canary pods=0  stable pods=2  analysis=           anomaly score=0
     [  6s] phase=Paused      step=1/4  canary pods=1  stable pods=2  analysis=Running    anomaly score=0
+    [ 17s] phase=Paused      step=1/4  canary pods=1  stable pods=2  analysis=Running    anomaly score=0.84
     ...
-    [ 35s] phase=Paused      step=1/4  canary pods=1  stable pods=2  analysis=Running    anomaly score=0
-    [ 40s] phase=Degraded    step=0/4  canary pods=0  stable pods=2  analysis=Failed     anomaly score=0
-  ✔ Argo Rollouts ABORTED the rollout after 41s
-    reason: Metric "error-rate" assessed Failed due to failed (2) > failureLimit (1)
+    [ 51s] phase=Paused      step=3/4  canary pods=1  stable pods=1  analysis=Running    anomaly score=0.84
+    [ 57s] phase=Degraded    step=0/4  canary pods=1  stable pods=2  analysis=Failed     anomaly score=0.84
+  ✔ Argo Rollouts ABORTED the rollout after 57s
+    reason: Metric "p95-latency" assessed Failed due to failed (2) > failureLimit (1)
+  ✔ anomaly detector scored the canary: peak release_anomaly_score = 0.85
 
 ==> Verifying the automatic rollback
-  ✔ canary pods are gone; all traffic is served by v1 again
+  ✔ canary pods are gone; all traffic is served by v2 again
 
 ==> Restoring the desired state
   ✔ rollout/api is Healthy
@@ -138,9 +140,22 @@ This is the output of `make demo-bad` in the
 ```
 
 The broken version keeps passing its health probes the whole time — only the
-metric analysis catches it. In this run the error-rate check fired before the
-anomaly detector had produced a score; the detector works on a slower cycle
-and targets subtler regressions (see [docs/LEARNING.md](docs/LEARNING.md#8-the-anomaly-detector)).
+metric analysis catches it.
+
+### What the end-to-end test verifies
+
+Every run of the workflow creates a fresh kind cluster and asserts, in order:
+
+| Scenario | Assertion |
+|----------|-----------|
+| Healthy release | Promoted to 100 % — with analysis that fails on missing data, so the canary was really measured |
+| Failing release (`FAULT_MODE=errors`) | Rollout aborted, canary pods gone, only the previous version serving |
+| Slow release (`FAULT_MODE=latency`) | Same, **and** `release_anomaly_score` was above 0 between the release and the abort |
+
+What it does not verify: in both broken scenarios the abort message names the
+threshold check (`error-rate` or `p95-latency`). The anomaly score was above
+its 0.7 limit as well, but no test isolates a rollback caused *only* by the
+anomaly analysis, and the score of a healthy canary is not asserted.
 
 ## What is in the box
 
@@ -152,7 +167,7 @@ and targets subtler regressions (see [docs/LEARNING.md](docs/LEARNING.md#8-the-a
 | **GitOps** | ArgoCD app-of-apps: the cluster state comes from this repository | [`deploy/argocd`](deploy/argocd) |
 | **Observability** | kube-prometheus-stack and Loki values, three Grafana dashboards as code, SLO burn-rate alerts (99.5 % availability) | [`deploy/observability`](deploy/observability), [`dashboards/`](deploy/charts/release-guardian/dashboards) |
 | **AIOps** | `anomaly-detector`: Isolation Forest over the canary's error rate and p95 latency versus the stable baseline, exposed as `release_anomaly_score` | [`apps/anomaly-detector`](apps/anomaly-detector) |
-| **End-to-end proof** | GitHub Actions creates a kind cluster, releases a broken version and asserts the rollback | [`e2e.yml`](.github/workflows/e2e.yml), [`scripts/`](scripts) |
+| **End-to-end proof** | GitHub Actions creates a kind cluster, releases a healthy, a failing and a slow version, and asserts promotion, rollback and a non-zero anomaly score | [`e2e.yml`](.github/workflows/e2e.yml), [`scripts/`](scripts) |
 | **Infrastructure as code** | Terraform for Azure: AKS (free control plane, one small node), Log Analytics, remote state, GitHub OIDC — validated, never applied automatically | [`infra/`](infra) |
 
 ## Tech stack
@@ -190,7 +205,7 @@ make demo-bad
 ```
 
 A broken release: aborted and rolled back. Try `make demo-bad FAULT_MODE=latency`
-for a slow release instead of a failing one.
+for a slow release instead of a failing one; that variant also checks the anomaly score.
 
 ```bash
 make grafana
@@ -250,11 +265,13 @@ Being explicit about what this project does not do:
 
 - Canary weights are approximated by pod counts; there is no traffic router,
   so "10 %" with two replicas is one canary pod out of three.
-- Analysis treats missing metrics as a pass (fail-open), which suits a demo
-  with a load generator and is discussed in the learning guide.
+- Analysis fails closed: a canary without metrics or without traffic is
+  aborted rather than promoted. A service therefore needs traffic to be
+  released; the demo uses a load generator.
 - The broken release is simulated with a flag, not a real defect.
 - The anomaly detector is an illustration of the technique and has not been
-  evaluated on real incident data.
+  evaluated on real incident data. A rollback triggered by the anomaly
+  analysis alone has not been demonstrated.
 - The Terraform code is formatted, validated and linted in CI but has not been
   applied from this repository. The ArgoCD layout and the Loki/Alloy values
   are not covered by the CI end-to-end test, which uses a lean Prometheus profile.

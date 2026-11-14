@@ -327,12 +327,16 @@ template as the argument `canary-hash`, and the query filters on it.
   third of the requests. Exact percentages need a traffic router (NGINX
   Ingress, Gateway API, Istio…). That was left out to keep the cluster light;
   the analysis is unaffected because it only looks at the canary's own pods.
-- **No data counts as a pass.** Each query ends with `or on() vector(0)`:
-  if the canary received no requests, the result is 0 instead of "no data",
-  which Argo would treat as an error. This is a *fail-open* choice that suits
-  a demo with a load generator. In production, prefer to fail closed: require
-  a minimum request rate, or treat missing data as inconclusive, so a canary
-  that receives no traffic cannot be promoted unjudged.
+- **No data counts as a failure (fail closed).** The success condition is
+  `len(result) > 0 && result[0] < limit`. It is only true when Prometheus
+  returned a real number below the limit. An empty result (canary not scraped,
+  no traffic) or `NaN` (zero requests divided by zero requests) is a failed
+  measurement, and two of them abort the rollout. A canary that cannot be
+  judged is never promoted. The consequence: a service needs traffic to be
+  released, and `initialDelay` must leave time for a few scrapes. One gap is
+  tolerated on purpose: the error counter has no time series before the first
+  error, so in the error-rate query a missing *error* series means 0 errors,
+  while a missing *request* series means no data.
 - **`failureLimit: 1`.** One bad measurement is tolerated, the second aborts.
   This avoids aborting on a single noisy sample at the cost of a few seconds.
 - **After an abort the Rollout is `Degraded`.** Traffic is safe, but the spec
@@ -480,7 +484,8 @@ Every 30 seconds, for each service (`detector/main.py`):
 1. Ask Prometheus for the **canary's** current error rate and p95 latency
    (`rollout_role="canary"`). No canary → score 0.
 2. Ask for the **stable** version's values over the last 30 minutes — the
-   baseline. Too few samples → score 0 (reason is logged).
+   baseline. Error rate and latency come from two range queries that are
+   joined on their timestamps. Too few samples → score 0 (reason is logged).
 3. Compute the score (`detector/scoring.py`) and publish it as
    `release_anomaly_score{service="…"}`.
 
@@ -517,14 +522,38 @@ score reaches 0.7. In the unit tests (`tests/test_detector.py`), with a flat
 baseline: a canary within the noise scores about 0.4; one with a 2 % error
 rate about 0.7; one with 50 % errors about 0.84.
 
+### Two bugs worth remembering
+
+The first cluster runs always showed a score of 0, although the unit tests
+passed. Both causes were in the Prometheus queries, not in the model, and the
+unit tests missed them because they used a fake Prometheus:
+
+1. *A counter that was never incremented does not exist.* A healthy version
+   has no `http_request_errors_total` series, so `errors / requests` returned
+   nothing and there was never a baseline. The query now uses
+   `(errors or on() vector(0)) / requests`.
+2. *Two range queries, two clocks.* Each query ended at its own "now", so the
+   timestamps of the error-rate series and the latency series never matched
+   and the join was empty. The window now ends on a multiple of the step.
+
+The end-to-end test now asserts a non-zero score, so this cannot regress
+silently.
+
 ### Honest limitations
 
+- A score of 0 means "no opinion" (no canary, or a baseline that is still too
+  short) and passes the anomaly analysis; only a missing metric fails it.
+- In the end-to-end runs the score rose to about 0.84 for both the failing and
+  the slow release, above the 0.7 limit, but the rollout's abort message named
+  the threshold check. A rollback caused only by the anomaly analysis — the
+  subtle regression it is meant for — is covered by unit tests of the scoring
+  function, not by a cluster test.
 - Two features and a short baseline: this is an explainable illustration of
   the technique, not a tuned production model. It has not been evaluated on
   real incident data.
-- It adds a delay: the detector runs every 30 s on top of the scrape interval,
-  so for a grossly broken release the plain error-rate check fires first. The
-  detector's value is the subtle case between "normal" and "over the threshold".
+- It adds a delay: the detector runs every 30 s (10 s on kind) on top of the
+  scrape interval. Its value is the subtle case between "normal" and "over
+  the threshold".
 - No seasonality: a baseline from a quiet period judges a canary in a busy one.
 - Simpler alternatives exist and are worth knowing: compare canary and stable
   directly (ratio or difference), a z-score against the baseline, or Argo
@@ -544,22 +573,32 @@ runner it:
 1. creates a kind cluster (Kubernetes inside Docker);
 2. builds the four images and loads them into the cluster;
 3. installs Argo Rollouts and the lean Prometheus profile;
-4. deploys version 1 and waits until Prometheus reports traffic;
-5. releases a version with `FAULT_MODE=errors`;
-6. **asserts** that the rollout is aborted, that the canary pods are gone and
-   that every running pod serves the old version;
-7. uploads rollout status, AnalysisRuns, events and logs as artifacts.
+4. deploys version 1, waits until Prometheus reports traffic and until the
+   stable version has a baseline (which also proves that the `rollout_role`
+   label reaches Prometheus);
+5. releases a **healthy** version and asserts it is promoted. Because the
+   analysis fails on missing data, promotion means the canary was measured;
+6. releases a **failing** version (`FAULT_MODE=errors`) and asserts that the
+   rollout is aborted, the canary pods are gone and every running pod serves
+   the previous version;
+7. releases a **slow** version (`FAULT_MODE=latency`), asserts the same, and
+   asserts that `release_anomaly_score` was above 0 between the release and
+   the abort (`max_over_time` over exactly that window);
+8. uploads rollout status, AnalysisRuns, events and logs as artifacts.
+
+Before each release the script waits until the score of the previous canary
+is back to 0, so each scenario is judged on its own.
 
 It runs on pushes to `main` that touch the app, chart or scripts, and can be
-started manually with a choice of fault mode.
+started manually.
 
 | Script | Role |
 |--------|------|
 | `scripts/versions.env` | The pinned versions of kind, Argo Rollouts and the Helm charts |
 | `scripts/lib.sh` | Shared settings and helpers (colours, `kubectl`/`helm` with a fixed context) |
 | `scripts/up.sh` | Steps 1–4 (`make up`) |
-| `scripts/release.sh` | Steps 5–6 (`make demo-good`, `make demo-bad`); exits non-zero when the expectation is not met |
-| `scripts/diagnostics.sh` | Step 7 (`make diagnostics`) |
+| `scripts/release.sh` | Steps 5–7 (`make demo-good`, `make demo-bad`); exits non-zero when the expectation is not met |
+| `scripts/diagnostics.sh` | Step 8 (`make diagnostics`) |
 | `scripts/down.sh` | Deletes the cluster |
 
 The important design choice: **CI and the local demo run the same scripts.**
@@ -655,10 +694,11 @@ individually runnable shell scripts.
 Stated plainly, because knowing the limits is part of understanding a design:
 
 - Canary weights are approximated by pod count (no traffic router).
-- Missing metrics are treated as a pass (fail-open), see [section 5](#5-progressive-delivery-with-argo-rollouts).
+- Analysis fails closed, so a service without traffic cannot be released; see [section 5](#5-progressive-delivery-with-argo-rollouts).
 - The broken release is simulated with a flag, not a real defect.
 - Redis is a single, non-persistent pod; the queue is at-most-once.
-- The anomaly detector is a small illustrative model, not validated on real incidents.
+- The anomaly detector is a small illustrative model, not validated on real incidents,
+  and no cluster test shows a rollback caused by the anomaly analysis alone.
 - The ArgoCD layout, the Loki/Alloy values and the Terraform code are provided
   and linted, but are not exercised by the CI end-to-end test, and Terraform
   has not been applied from this repository.
