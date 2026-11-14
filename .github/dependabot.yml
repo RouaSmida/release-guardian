@@ -1,0 +1,18 @@
+# Keeps the pinned versions in this repository up to date through pull requests.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directories: [/apps/api, /apps/worker, /apps/anomaly-detector]
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directories: [/apps/web, /apps/api, /apps/worker, /apps/anomaly-detector]
+    schedule: { interval: weekly }
+  - package-ecosystem: terraform
+    directories: [/infra/bootstrap, /infra/platform]
+    schedule: { interval: weekly }
