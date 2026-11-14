@@ -1,0 +1,57 @@
+{{- if .Values.monitoring.alerts }}
+{{- $ns := .Release.Namespace }}
+{{- $budget := printf "(1 - %v)" .Values.monitoring.sloTarget }}
+# SLO: {{ .Values.monitoring.sloTarget }} of HTTP requests succeed (no 5xx).
+# Alerts follow the multi-window, multi-burn-rate method from the Google SRE
+# Workbook: page when the error budget burns fast, open a ticket when it burns slowly.
+# Burn rate 1 = exactly on budget; 14.4 = a 30-day budget would be gone in 2 days.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: release-guardian-slo
+  labels:
+    app.kubernetes.io/part-of: release-guardian
+spec:
+  groups:
+    - name: release-guardian.slo.recording
+      rules:
+        {{- range $window := list "5m" "30m" "1h" "6h" }}
+        - record: service:http_error_ratio:rate{{ $window }}
+          expr: |
+            sum by (namespace, service) (rate(http_request_errors_total{namespace="{{ $ns }}"}[{{ $window }}]))
+            /
+            sum by (namespace, service) (rate(http_requests_total{namespace="{{ $ns }}"}[{{ $window }}]))
+        {{- end }}
+    - name: release-guardian.slo.alerts
+      rules:
+        - alert: ErrorBudgetFastBurn
+          expr: |
+            service:http_error_ratio:rate1h > (14.4 * {{ $budget }})
+            and
+            service:http_error_ratio:rate5m > (14.4 * {{ $budget }})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: {{ `"{{ $labels.service }} is burning its error budget 14.4x too fast"` }}
+            description: {{ `"Error ratio over the last hour is {{ $value | humanizePercentage }}. See docs/RUNBOOK.md."` }}
+        - alert: ErrorBudgetSlowBurn
+          expr: |
+            service:http_error_ratio:rate6h > (6 * {{ $budget }})
+            and
+            service:http_error_ratio:rate30m > (6 * {{ $budget }})
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: {{ `"{{ $labels.service }} is burning its error budget 6x too fast"` }}
+            description: {{ `"Error ratio over the last 6 hours is {{ $value | humanizePercentage }}. See docs/RUNBOOK.md."` }}
+        - alert: CanaryAnomalyDetected
+          expr: release_anomaly_score{namespace="{{ $ns }}"} > {{ .Values.rollout.analysis.anomalyThreshold }}
+          for: 1m
+          labels:
+            severity: info
+          annotations:
+            summary: {{ `"Canary of {{ $labels.service }} behaves unlike the stable version"` }}
+            description: {{ `"Anomaly score {{ $value | humanize }}. Argo Rollouts aborts the rollout automatically."` }}
+{{- end }}

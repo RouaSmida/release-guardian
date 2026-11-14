@@ -1,0 +1,29 @@
+# Lean profile for the CI end-to-end test (and `make up PROFILE=lean`):
+# only the Prometheus Operator and one small Prometheus. The application's
+# PodMonitor and PrometheusRule work exactly as with the full stack.
+
+prometheus:
+  prometheusSpec:
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 2h
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 512Mi }
+
+grafana: { enabled: false }
+alertmanager: { enabled: false }
+nodeExporter: { enabled: false }
+kubeStateMetrics: { enabled: false }
+defaultRules: { create: false }
+kubeApiServer: { enabled: false }
+kubelet: { enabled: false }
+coreDns: { enabled: false }
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }

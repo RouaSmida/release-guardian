@@ -1,18 +1,29 @@
-# Keeps the pinned versions in this repository up to date through pull requests.
+# Keeps the pinned versions in this repository up to date.
+# Updates are grouped: at most one pull request per ecosystem per week.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
   - package-ecosystem: npm
     directory: /apps/web
     schedule: { interval: weekly }
+    groups:
+      npm: { patterns: ["*"] }
   - package-ecosystem: pip
     directories: [/apps/api, /apps/worker, /apps/anomaly-detector]
     schedule: { interval: weekly }
+    groups:
+      python: { patterns: ["*"] }
   - package-ecosystem: docker
     directories: [/apps/web, /apps/api, /apps/worker, /apps/anomaly-detector]
     schedule: { interval: weekly }
+    groups:
+      base-images: { patterns: ["*"] }
   - package-ecosystem: terraform
     directories: [/infra/bootstrap, /infra/platform]
     schedule: { interval: weekly }
+    groups:
+      terraform: { patterns: ["*"] }

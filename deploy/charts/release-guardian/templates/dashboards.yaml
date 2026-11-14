@@ -1,0 +1,16 @@
+{{- if .Values.monitoring.dashboards }}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+---
+# Loaded into Grafana by its dashboard sidecar, which watches for this label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-{{ base $path | trimSuffix ".json" }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: release-guardian
+data:
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+{{- end }}
+{{- end }}
