@@ -4,6 +4,7 @@ from prometheus_client import CollectorRegistry
 
 from detector.config import Settings
 from detector.main import Detector
+from detector.prometheus import error_rate_query
 from detector.scoring import anomaly_score
 
 NOISE = np.array([0.005, 0.02])
@@ -98,3 +99,10 @@ def test_prometheus_failure_marks_detector_unhealthy():
     assert detector.run_cycle() == []
     assert not detector.healthy
     assert registry.get_sample_value("release_anomaly_evaluation_failures_total") == 1
+
+
+def test_error_rate_query_treats_a_missing_error_series_as_zero_errors():
+    query = error_rate_query("ns", "api", "canary", "1m")
+    numerator, denominator = query.split(" / ")
+    assert "or on() vector(0)" in numerator  # no error series = 0 errors
+    assert "vector(0)" not in denominator  # no request series = no data

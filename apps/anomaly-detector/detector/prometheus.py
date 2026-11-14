@@ -8,8 +8,10 @@ import requests
 
 def error_rate_query(namespace: str, service: str, role: str, window: str) -> str:
     selector = f'namespace="{namespace}",service="{service}",rollout_role="{role}"'
+    # The error counter only exists once a first error happened, so "no series"
+    # means "no errors" (0). The request counter decides whether there is data.
     return (
-        f"sum(rate(http_request_errors_total{{{selector}}}[{window}]))"
+        f"(sum(rate(http_request_errors_total{{{selector}}}[{window}])) or on() vector(0))"
         f" / sum(rate(http_requests_total{{{selector}}}[{window}]))"
     )
 

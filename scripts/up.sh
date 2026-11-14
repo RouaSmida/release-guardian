@@ -76,6 +76,16 @@ for _ in $(seq 40); do
 done
 [ -n "$rate" ] && [ "$rate" != "0" ] || die "Prometheus has no http_requests_total data; check the PodMonitor (make diagnostics)"
 ok "Prometheus measures $(printf '%.1f' "$rate") requests/s"
+info "collecting a baseline of the stable version for the anomaly detector"
+baseline_query="count_over_time(sum(rate(http_requests_total%7Bnamespace=%22$NAMESPACE%22,rollout_role=%22stable%22%7D%5B1m%5D))%5B10m:15s%5D)"
+samples=""
+for _ in $(seq 40); do
+  samples="$(prom_value "$baseline_query")"
+  if [ -n "$samples" ] && [ "${samples%.*}" -ge 6 ]; then break; fi
+  sleep 5
+done
+[ -n "$samples" ] && [ "${samples%.*}" -ge 6 ] || die "no metrics labelled rollout_role=stable in Prometheus (make diagnostics)"
+ok "baseline has ${samples%.*} samples"
 
 cat <<MSG
 

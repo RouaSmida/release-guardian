@@ -3,6 +3,8 @@
 #   scripts/release.sh good   healthy version  -> must be promoted
 #   scripts/release.sh bad    broken version   -> must be aborted and rolled back
 # Environment: SERVICE (default: api), FAULT_MODE for "bad" (errors | latency).
+# With FAULT_MODE=latency the script also asserts that the anomaly detector
+# scored the canary above 0 while it was running (ASSERT_ANOMALY=0 to skip).
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require kubectl helm
 
@@ -35,6 +37,19 @@ served_versions() {
 [ "$(rollout_field "$SERVICE" '{.status.phase}')" = "Healthy" ] \
   || die "rollout/$SERVICE is not Healthy; wait or run 'make status' before releasing"
 
+ASSERT_ANOMALY="${ASSERT_ANOMALY:-$([ "$FAULT" = "latency" ] && echo 1 || echo 0)}"
+selector="%7Bnamespace=%22$NAMESPACE%22,service=%22$SERVICE%22%7D"
+anomaly_query="max(release_anomaly_score$selector)"
+positive() { awk -v v="${1:-0}" 'BEGIN { exit !(v + 0 > 0) }'; }
+
+# A previous canary stays in the 1-minute rate window for a while after it is
+# gone. Start from a score of 0 so this release is judged on its own.
+for _ in $(seq 30); do
+  positive "$(prom_value "$anomaly_query")" || break
+  info "waiting for the anomaly score of the previous canary to return to 0"
+  sleep 5
+done
+
 OLD_VERSION="$(current_version)"
 OLD_HASH="$(rollout_field "$SERVICE" '{.status.stableRS}')"
 number="${OLD_VERSION//[^0-9]/}"
@@ -52,7 +67,6 @@ step "Watching the rollout"
 start=$SECONDS
 outcome="timeout"
 NEW_HASH=""
-anomaly_query="max(release_anomaly_score%7Bnamespace=%22$NAMESPACE%22,service=%22$SERVICE%22%7D)"
 while (( SECONDS - start < TIMEOUT )); do
   phase="$(rollout_field "$SERVICE" '{.status.phase}')"
   aborted="$(rollout_field "$SERVICE" '{.status.abort}')"
@@ -84,8 +98,19 @@ fi
 
 # ---- bad release: it must have been aborted, and the old version must still serve ----
 [ "$outcome" = "aborted" ] || die "expected the broken release to be aborted, but it was $outcome"
-ok "Argo Rollouts ABORTED the rollout after $(( SECONDS - start ))s"
+elapsed=$(( SECONDS - start ))
+ok "Argo Rollouts ABORTED the rollout after ${elapsed}s"
 info "reason: $(analysis_field "$NEW_HASH" message)"
+
+# Highest anomaly score Prometheus recorded between the release and the abort.
+peak="$(prom_value "max_over_time(release_anomaly_score$selector%5B${elapsed}s%5D)")"
+if positive "$peak"; then
+  ok "anomaly detector scored the canary: peak release_anomaly_score = $(printf '%.2f' "$peak")"
+elif [ "$ASSERT_ANOMALY" = "1" ]; then
+  die "release_anomaly_score stayed at 0 while the canary was running (expected > 0)"
+else
+  warn "release_anomaly_score stayed at 0 while the canary was running (not asserted for FAULT_MODE=$FAULT)"
+fi
 
 step "Verifying the automatic rollback"
 for _ in $(seq 30); do

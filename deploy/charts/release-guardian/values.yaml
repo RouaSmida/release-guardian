@@ -21,7 +21,7 @@ rollout:
   analysis:
     enabled: true
     interval: 15s        # time between two measurements
-    initialDelay: 30s    # let the canary receive traffic before judging it
+    initialDelay: 45s    # let the canary be scraped a few times first: no data = failed
     failureLimit: 1      # a second failed measurement aborts the rollout
     rateWindow: 1m
     anomalyThreshold: 0.7  # release_anomaly_score must stay below this

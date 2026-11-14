@@ -2,9 +2,12 @@
   Queries only look at the canary's pods, selected by their pod-template hash
   (passed in by the Rollout as the "canary-hash" argument).
 
-  "or on() vector(0)" turns "no data" into 0, so a canary without traffic passes
-  instead of erroring. Demo clusters run a load generator; see docs/LEARNING.md
-  for the trade-off.
+  The checks fail closed: "len(result) > 0 && result[0] < limit" is only true
+  when Prometheus returned a real number below the limit. An empty result (no
+  series, canary not scraped, no traffic) or NaN (0 requests / 0 requests) is a
+  failed measurement, so a canary that cannot be judged is never promoted.
+  The only tolerated gap is the error counter: it does not exist before the
+  first error, which means "0 errors".
 */ -}}
 {{- if .Values.rollout.analysis.enabled }}
 {{- $a := .Values.rollout.analysis }}
@@ -27,26 +30,24 @@ spec:
       interval: {{ $a.interval }}
       initialDelay: {{ $a.initialDelay }}
       failureLimit: {{ $a.failureLimit }}
-      successCondition: result[0] < {{ $svc.analysis.maxErrorRate }}
+      successCondition: len(result) > 0 && result[0] < {{ $svc.analysis.maxErrorRate }}
       provider:
         prometheus:
           address: {{ $.Values.prometheus.address }}
           query: |
             (sum(rate({{ $svc.metrics.errors }}{ {{- $selector -}} }[{{ $a.rateWindow }}])) or on() vector(0))
             /
-            (sum(rate({{ $svc.metrics.requests }}{ {{- $selector -}} }[{{ $a.rateWindow }}])) > 0)
-            or on() vector(0)
+            sum(rate({{ $svc.metrics.requests }}{ {{- $selector -}} }[{{ $a.rateWindow }}]))
     - name: p95-latency
       interval: {{ $a.interval }}
       initialDelay: {{ $a.initialDelay }}
       failureLimit: {{ $a.failureLimit }}
-      successCondition: result[0] < {{ $svc.analysis.maxP95Seconds }}
+      successCondition: len(result) > 0 && result[0] < {{ $svc.analysis.maxP95Seconds }}
       provider:
         prometheus:
           address: {{ $.Values.prometheus.address }}
           query: |
-            (histogram_quantile(0.95, sum by (le) (rate({{ $svc.metrics.duration }}_bucket{ {{- $selector -}} }[{{ $a.rateWindow }}]))) >= 0)
-            or on() vector(0)
+            histogram_quantile(0.95, sum by (le) (rate({{ $svc.metrics.duration }}_bucket{ {{- $selector -}} }[{{ $a.rateWindow }}])))
 {{- if and $.Values.anomalyDetector.enabled $svc.analysis.anomaly }}
 ---
 apiVersion: argoproj.io/v1alpha1
@@ -63,13 +64,12 @@ spec:
       interval: {{ $a.interval }}
       initialDelay: {{ $a.initialDelay }}
       failureLimit: {{ $a.failureLimit }}
-      successCondition: result[0] < {{ $a.anomalyThreshold }}
+      successCondition: len(result) > 0 && result[0] < {{ $a.anomalyThreshold }}
       provider:
         prometheus:
           address: {{ $.Values.prometheus.address }}
           query: |
             max(release_anomaly_score{namespace="{{ $.Release.Namespace }}",service="{{ $name }}"})
-            or on() vector(0)
 {{- end }}
 {{- end }}
 {{- end }}

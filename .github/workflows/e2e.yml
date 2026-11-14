@@ -1,21 +1,12 @@
 name: E2E rollback proof
 
-# Proves the core promise on a throwaway kind cluster: a broken release is
-# detected by metric analysis, aborted, and rolled back automatically.
+# Proves the core promise on a throwaway kind cluster: a healthy release is
+# promoted, and a broken one (failing, then slow) is detected by metric
+# analysis, aborted, and rolled back automatically.
 # Uses the same scripts as the local demo (make up / make demo-bad).
 
 on:
   workflow_dispatch:
-    inputs:
-      fault_mode:
-        description: How the release is broken
-        type: choice
-        options: [errors, latency]
-        default: errors
-      also_run_good_release:
-        description: Also release a healthy version first (must be promoted)
-        type: boolean
-        default: false
   push:
     branches: [main]
     paths:
@@ -58,11 +49,13 @@ jobs:
         run: make up PROFILE=lean
 
       - name: Release a healthy version (must be promoted)
-        if: inputs.also_run_good_release
         run: make demo-good
 
-      - name: Release a broken version (must be aborted and rolled back)
-        run: make demo-bad FAULT_MODE=${{ inputs.fault_mode || 'errors' }}
+      - name: Release a failing version (must be aborted and rolled back)
+        run: make demo-bad FAULT_MODE=errors
+
+      - name: Release a slow version (must be rolled back, anomaly score must be > 0)
+        run: make demo-bad FAULT_MODE=latency
 
       - name: Collect diagnostics
         if: always()
