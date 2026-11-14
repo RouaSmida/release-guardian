@@ -1,0 +1,83 @@
+name: Terraform
+
+# Checks only: this workflow never runs `terraform apply`.
+#  - fmt, validate and tflint need no cloud access and always run.
+#  - plan runs only when the repository variables for Azure OIDC are configured
+#    (see docs/RUNBOOK.md); it authenticates without any stored secret.
+
+on:
+  pull_request:
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  checks:
+    name: fmt, validate, tflint (${{ matrix.dir }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [infra/bootstrap, infra/platform]
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.9.8
+      - name: terraform fmt
+        run: terraform fmt -check -diff -recursive infra
+      - name: terraform validate
+        working-directory: ${{ matrix.dir }}
+        run: |
+          terraform init -backend=false
+          terraform validate
+      - uses: terraform-linters/setup-tflint@v4.0.0
+        with:
+          tflint_version: v0.53.0
+      - name: tflint
+        working-directory: ${{ matrix.dir }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}   # avoids API rate limits when downloading the plugin
+        run: |
+          tflint --config "$GITHUB_WORKSPACE/infra/.tflint.hcl" --init
+          tflint --config "$GITHUB_WORKSPACE/infra/.tflint.hcl" --format compact
+
+  plan:
+    name: plan (infra/platform)
+    if: github.event_name == 'pull_request' && vars.AZURE_CLIENT_ID != ''
+    needs: checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write   # lets the job request an OIDC token that Azure trusts
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    defaults:
+      run:
+        working-directory: infra/platform
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.9.8
+      - name: terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=tfstate"
+      - name: terraform plan
+        run: terraform plan -lock=false -no-color

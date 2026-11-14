@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (ignored by Git) and adjust.
+# The subscription ID is NOT set here: export TF_VAR_subscription_id instead.
+location     = "westeurope"
+prefix       = "relguard"
+environment  = "demo"
+node_vm_size = "Standard_B2s"
+node_count   = 1
