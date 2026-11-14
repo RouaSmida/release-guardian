@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Release Guardian</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z" />
+          <path class="check" d="m8.5 12 2.5 2.5 4.5-5" />
+        </svg>
+        <div>
+          <h1>Release Guardian</h1>
+          <p>Demo application &mdash; canary releases with automatic rollback</p>
+        </div>
+      </div>
+      <div class="versions" id="versions" aria-live="polite"></div>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Live request health</h2>
+        <p class="hint">
+          Each square is one request from this page through <code>web</code> to
+          <code>api</code>. During a broken canary some turn red until the rollout is aborted.
+        </p>
+        <div class="pulse" id="pulse" role="img" aria-label="Outcome of recent requests"></div>
+        <div class="stats">
+          <div><span id="ok-count">0</span><label>succeeded</label></div>
+          <div><span id="fail-count">0</span><label>failed</label></div>
+          <div><span id="success-rate">&ndash;</span><label>success rate</label></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Submit a job</h2>
+        <p class="hint">The API queues the text; the worker analyses it in the background.</p>
+        <form id="job-form">
+          <textarea id="job-text" rows="3" maxlength="5000" required
+            placeholder="Type any text to analyse…"></textarea>
+          <button type="submit">Queue job</button>
+          <span id="form-message" role="status"></span>
+        </form>
+      </section>
+
+      <section class="card wide">
+        <h2>Recent jobs</h2>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Status</th><th>Words</th><th>Unique</th><th>Worker version</th><th>Created</th></tr>
+          </thead>
+          <tbody id="jobs"><tr><td colspan="6" class="empty">No jobs yet.</td></tr></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
