@@ -22,7 +22,7 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v4.1.0
         with:
           node-version: "22"
@@ -44,7 +44,7 @@ jobs:
       run:
         working-directory: apps/${{ matrix.service }}
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.13"
@@ -67,7 +67,7 @@ jobs:
       matrix:
         service: [web, api, worker, anomaly-detector]
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Compute image name (registry paths must be lowercase)
         id: image
