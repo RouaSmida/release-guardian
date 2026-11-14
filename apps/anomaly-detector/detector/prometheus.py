@@ -45,8 +45,12 @@ class PrometheusClient:
         return _finite(result[0]["value"][1]) if result else None
 
     def series(self, query: str, minutes: int, step_seconds: int) -> dict[float, float]:
-        """Recent values of a single-series query as {timestamp: value}."""
-        end = time.time()
+        """Recent values of a single-series query as {timestamp: value}.
+
+        The window ends on a multiple of the step, so two queries made a moment
+        apart return the same timestamps and can be joined on them.
+        """
+        end = time.time() // step_seconds * step_seconds
         params = {"query": query, "start": end - minutes * 60, "end": end, "step": step_seconds}
         result = self._get("/api/v1/query_range", params)
         if not result:

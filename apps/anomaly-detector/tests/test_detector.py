@@ -4,7 +4,7 @@ from prometheus_client import CollectorRegistry
 
 from detector.config import Settings
 from detector.main import Detector
-from detector.prometheus import error_rate_query
+from detector.prometheus import PrometheusClient, error_rate_query
 from detector.scoring import anomaly_score
 
 NOISE = np.array([0.005, 0.02])
@@ -106,3 +106,27 @@ def test_error_rate_query_treats_a_missing_error_series_as_zero_errors():
     numerator, denominator = query.split(" / ")
     assert "or on() vector(0)" in numerator  # no error series = 0 errors
     assert "vector(0)" not in denominator  # no request series = no data
+
+
+def test_range_queries_made_at_different_moments_share_timestamps(monkeypatch):
+    """Error rate and latency are fetched separately and joined on the timestamp."""
+    clock = iter([1000.2, 1003.9])
+    monkeypatch.setattr("detector.prometheus.time.time", lambda: next(clock))
+
+    class Response:
+        def __init__(self, params):
+            self.params = params
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):  # one point per step, like Prometheus
+            start, end, step = (int(self.params[k]) for k in ("start", "end", "step"))
+            values = [[ts, "1"] for ts in range(start, end + 1, step)]
+            return {"data": {"result": [{"values": values}]}}
+
+    monkeypatch.setattr(
+        "detector.prometheus.requests.get", lambda url, params, timeout: Response(params)
+    )
+    client = PrometheusClient("http://prometheus")
+    assert client.series("a", 1, 15).keys() == client.series("b", 1, 15).keys()

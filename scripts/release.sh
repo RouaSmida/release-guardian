@@ -107,6 +107,8 @@ peak="$(prom_value "max_over_time(release_anomaly_score$selector%5B${elapsed}s%5
 if positive "$peak"; then
   ok "anomaly detector scored the canary: peak release_anomaly_score = $(printf '%.2f' "$peak")"
 elif [ "$ASSERT_ANOMALY" = "1" ]; then
+  info "last anomaly-detector log lines:"
+  k -n "$NAMESPACE" logs deployment/anomaly-detector --tail=6 2>&1 | sed 's/^/      /' || true
   die "release_anomaly_score stayed at 0 while the canary was running (expected > 0)"
 else
   warn "release_anomaly_score stayed at 0 while the canary was running (not asserted for FAULT_MODE=$FAULT)"
