@@ -95,3 +95,13 @@ resource "azurerm_role_assignment" "github_state" {
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_user_assigned_identity.github.principal_id
 }
+
+# The person who runs the bootstrap also needs blob access, to run
+# `terraform init/plan/apply` for infra/platform from their own machine.
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_role_assignment" "operator_state" {
+  scope                = azurerm_storage_account.state.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
