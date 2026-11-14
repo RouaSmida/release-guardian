@@ -1,0 +1,7 @@
+apiVersion: v2
+name: release-guardian
+description: Demo application (web, api, worker) delivered as Argo Rollouts canaries with metric analysis and automatic rollback
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.27.0-0"

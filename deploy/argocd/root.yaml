@@ -1,0 +1,23 @@
+# "App of apps": the only manifest applied by hand (kubectl apply -f deploy/argocd/root.yaml).
+# It points ArgoCD at deploy/argocd/apps, and every Application found there is
+# created and kept in sync from this Git repository.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/RouaSmida/release-guardian.git
+    targetRevision: main
+    path: deploy/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

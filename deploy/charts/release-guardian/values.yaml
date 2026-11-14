@@ -1,0 +1,126 @@
+# Default values. Every service below is rendered by the same templates, so all
+# of them get identical probes, security settings, PDB, HPA, Rollout and analysis.
+
+global:
+  # Images are <imageRepository>/<service>:<imageTag>
+  imageRepository: release-guardian
+  imageTag: dev
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+prometheus:
+  # Queried by the AnalysisTemplates and the anomaly detector.
+  # "prometheus-operated" is the Service the Prometheus Operator always creates.
+  address: http://prometheus-operated.monitoring.svc:9090
+  scrapeInterval: 15s
+
+rollout:
+  # Canary steps: 10% -> pause -> 50% -> pause -> 100% (promotion).
+  pauseAt10: 60s
+  pauseAt50: 60s
+  analysis:
+    enabled: true
+    interval: 15s        # time between two measurements
+    initialDelay: 30s    # let the canary receive traffic before judging it
+    failureLimit: 1      # a second failed measurement aborts the rollout
+    rateWindow: 1m
+    anomalyThreshold: 0.7  # release_anomaly_score must stay below this
+
+services:
+  web:
+    enabled: true
+    replicas: 2
+    imageTag: ""         # override global.imageTag for this service only
+    version: ""          # APP_VERSION shown by the service; defaults to the image tag
+    faultMode: none      # none | errors | latency (deliberately break a release)
+    env:
+      API_URL: http://api:8080
+    metrics:
+      requests: http_requests_total
+      errors: http_request_errors_total
+      duration: http_request_duration_seconds
+    analysis:
+      maxErrorRate: 0.02     # 2 %
+      maxP95Seconds: 0.5     # 500 ms
+      anomaly: true
+    autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 5, targetCPUUtilization: 70 }
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { cpu: 500m, memory: 192Mi }
+
+  api:
+    enabled: true
+    replicas: 2
+    imageTag: ""
+    version: ""
+    faultMode: none
+    env:
+      REDIS_URL: redis://redis:6379/0
+    metrics:
+      requests: http_requests_total
+      errors: http_request_errors_total
+      duration: http_request_duration_seconds
+    analysis:
+      maxErrorRate: 0.02
+      maxP95Seconds: 0.5
+      anomaly: true
+    autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 5, targetCPUUtilization: 70 }
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { cpu: 500m, memory: 192Mi }
+
+  worker:
+    enabled: true
+    replicas: 2
+    imageTag: ""
+    version: ""
+    faultMode: none
+    env:
+      REDIS_URL: redis://redis:6379/0
+    metrics:   # the worker has no HTTP traffic; a "request" is a job
+      requests: worker_jobs_total
+      errors: worker_job_errors_total
+      duration: worker_job_duration_seconds
+    analysis:
+      maxErrorRate: 0.02
+      maxP95Seconds: 0.5
+      anomaly: false   # the detector scores HTTP services only
+    autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 5, targetCPUUtilization: 70 }
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 128Mi }
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+anomalyDetector:
+  enabled: true
+  imageTag: ""
+  services: "web,api"
+  intervalSeconds: 30
+  baselineWindowMinutes: 30
+  baselineStepSeconds: 15
+  minBaselineSamples: 8
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits: { cpu: "1", memory: 384Mi }
+
+redis:
+  enabled: true
+  image: redis:7.4-alpine
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# Synthetic traffic, so a canary has requests to be judged on. Demo clusters only.
+loadgen:
+  enabled: false
+  image: busybox:1.36
+  sleepSeconds: "0.2"
+
+monitoring:
+  podMonitor: true        # requires the Prometheus Operator CRDs
+  alerts: true            # SLO burn-rate PrometheusRule
+  dashboards: true        # Grafana dashboards as ConfigMaps (picked up by the sidecar)
+  sloTarget: 0.995        # 99.5 % availability

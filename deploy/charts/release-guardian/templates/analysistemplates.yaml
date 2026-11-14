@@ -1,0 +1,76 @@
+{{- /*
+  Queries only look at the canary's pods, selected by their pod-template hash
+  (passed in by the Rollout as the "canary-hash" argument).
+
+  "or on() vector(0)" turns "no data" into 0, so a canary without traffic passes
+  instead of erroring. Demo clusters run a load generator; see docs/LEARNING.md
+  for the trade-off.
+*/ -}}
+{{- if .Values.rollout.analysis.enabled }}
+{{- $a := .Values.rollout.analysis }}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $ctx := dict "name" $name "root" $ }}
+{{- $selector := printf "namespace=\"%s\",service=\"%s\",rollouts_pod_template_hash=\"{{args.canary-hash}}\"" $.Release.Namespace $name }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ $name }}-health
+  labels:
+    {{- include "rg.labels" $ctx | nindent 4 }}
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    - name: error-rate
+      interval: {{ $a.interval }}
+      initialDelay: {{ $a.initialDelay }}
+      failureLimit: {{ $a.failureLimit }}
+      successCondition: result[0] < {{ $svc.analysis.maxErrorRate }}
+      provider:
+        prometheus:
+          address: {{ $.Values.prometheus.address }}
+          query: |
+            (sum(rate({{ $svc.metrics.errors }}{ {{- $selector -}} }[{{ $a.rateWindow }}])) or on() vector(0))
+            /
+            (sum(rate({{ $svc.metrics.requests }}{ {{- $selector -}} }[{{ $a.rateWindow }}])) > 0)
+            or on() vector(0)
+    - name: p95-latency
+      interval: {{ $a.interval }}
+      initialDelay: {{ $a.initialDelay }}
+      failureLimit: {{ $a.failureLimit }}
+      successCondition: result[0] < {{ $svc.analysis.maxP95Seconds }}
+      provider:
+        prometheus:
+          address: {{ $.Values.prometheus.address }}
+          query: |
+            (histogram_quantile(0.95, sum by (le) (rate({{ $svc.metrics.duration }}_bucket{ {{- $selector -}} }[{{ $a.rateWindow }}]))) >= 0)
+            or on() vector(0)
+{{- if and $.Values.anomalyDetector.enabled $svc.analysis.anomaly }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ $name }}-anomaly
+  labels:
+    {{- include "rg.labels" $ctx | nindent 4 }}
+spec:
+  args:
+    - name: canary-hash   # not used by the query; declared so both templates accept the same args
+  metrics:
+    - name: anomaly-score
+      interval: {{ $a.interval }}
+      initialDelay: {{ $a.initialDelay }}
+      failureLimit: {{ $a.failureLimit }}
+      successCondition: result[0] < {{ $a.anomalyThreshold }}
+      provider:
+        prometheus:
+          address: {{ $.Values.prometheus.address }}
+          query: |
+            max(release_anomaly_score{namespace="{{ $.Release.Namespace }}",service="{{ $name }}"})
+            or on() vector(0)
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

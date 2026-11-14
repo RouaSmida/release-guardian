@@ -1,0 +1,23 @@
+{{- if .Values.monitoring.podMonitor }}
+# Tells the Prometheus Operator to scrape every pod of this application.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: release-guardian
+  labels:
+    app.kubernetes.io/part-of: release-guardian
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: release-guardian
+  # Copy these pod labels onto every metric. They become
+  # rollouts_pod_template_hash (which ReplicaSet = which version) and
+  # rollout_role (canary | stable).
+  podTargetLabels:
+    - rollouts-pod-template-hash
+    - rollout-role
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.prometheus.scrapeInterval }}
+{{- end }}

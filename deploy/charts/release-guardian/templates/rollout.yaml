@@ -1,0 +1,109 @@
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $ctx := dict "name" $name "root" $ "tag" $svc.imageTag }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rg.labels" $ctx | nindent 4 }}
+spec:
+  {{- if not $svc.autoscaling.enabled }}
+  replicas: {{ $svc.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "rg.selectorLabels" $ctx | nindent 6 }}
+  strategy:
+    canary:
+      maxSurge: 1
+      maxUnavailable: 0
+      # Argo Rollouts keeps these labels up to date on the pods. They end up as
+      # the Prometheus label "rollout_role", used by dashboards and the detector.
+      canaryMetadata:
+        labels:
+          rollout-role: canary
+      stableMetadata:
+        labels:
+          rollout-role: stable
+      {{- if $.Values.rollout.analysis.enabled }}
+      # Background analysis: starts after the first setWeight and runs until the
+      # rollout ends. A failed analysis aborts the rollout = automatic rollback.
+      analysis:
+        startingStep: 1
+        templates:
+          - templateName: {{ $name }}-health
+          {{- if and $.Values.anomalyDetector.enabled $svc.analysis.anomaly }}
+          - templateName: {{ $name }}-anomaly
+          {{- end }}
+        args:
+          - name: canary-hash
+            valueFrom:
+              podTemplateHashValue: Latest
+      {{- end }}
+      steps:
+        - setWeight: 10
+        - pause:
+            duration: {{ $.Values.rollout.pauseAt10 }}
+        - setWeight: 50
+        - pause:
+            duration: {{ $.Values.rollout.pauseAt50 }}
+        # after the last step the canary is promoted to 100 %
+  template:
+    metadata:
+      labels:
+        {{- include "rg.podLabels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: release-guardian
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "rg.podSecurityContext" $ctx | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: {{ $name }}
+          image: {{ include "rg.image" $ctx }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SERVICE_NAME
+              value: {{ $name | quote }}
+            - name: APP_VERSION
+              value: {{ $svc.version | default $svc.imageTag | default $.Values.global.imageTag | quote }}
+            - name: FAULT_MODE
+              value: {{ $svc.faultMode | quote }}
+            - name: PORT
+              value: "8080"
+            {{- range $key, $value := $svc.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          # Liveness: restart a hung process. Readiness: only route traffic when
+          # dependencies are reachable. Startup: give slow starts time without
+          # loosening the other two probes.
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          securityContext:
+            {{- include "rg.containerSecurityContext" $ctx | nindent 12 }}
+{{- end }}
+{{- end }}

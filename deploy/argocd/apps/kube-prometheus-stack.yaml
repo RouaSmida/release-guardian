@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"   # CRDs must exist before the application
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: release-guardian
+  # Two sources: the upstream chart, and this repository for the values file.
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 65.5.0
+      helm:
+        releaseName: kps
+        valueFiles:
+          - $values/deploy/observability/kube-prometheus-stack/values.yaml
+    - repoURL: https://github.com/RouaSmida/release-guardian.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # the CRDs are too large for client-side apply

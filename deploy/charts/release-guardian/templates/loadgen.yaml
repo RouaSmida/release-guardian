@@ -1,0 +1,53 @@
+{{- if .Values.loadgen.enabled }}
+{{- $ctx := dict "name" "loadgen" "root" . }}
+# Synthetic traffic for demos: without requests there is nothing to analyse.
+# Every request opens a new connection, so the Services spread the load over
+# stable and canary pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  labels:
+    {{- include "rg.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rg.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rg.selectorLabels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: release-guardian
+      securityContext:
+        {{- include "rg.podSecurityContext" $ctx | nindent 8 }}
+        runAsUser: 65534
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: loadgen
+          image: {{ .Values.loadgen.image }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              i=0
+              while true; do
+                wget -q -T 3 -O /dev/null http://web:8080/ || true
+                wget -q -T 3 -O /dev/null http://web:8080/api/jobs || true
+                wget -q -T 3 -O /dev/null http://api:8080/api/info || true
+                i=$((i + 1))
+                if [ $((i % 5)) -eq 0 ]; then
+                  wget -q -T 3 -O /dev/null \
+                    --header 'Content-Type: application/json' \
+                    --post-data "{\"text\": \"synthetic job number $i from the load generator\"}" \
+                    http://web:8080/api/jobs || true
+                fi
+                sleep {{ .Values.loadgen.sleepSeconds }}
+              done
+          resources:
+            requests: { cpu: 25m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 32Mi }
+          securityContext:
+            {{- include "rg.containerSecurityContext" $ctx | nindent 12 }}
+{{- end }}

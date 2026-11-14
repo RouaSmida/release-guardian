@@ -1,0 +1,31 @@
+# The demo application. A release is a Git commit that changes
+# deploy/charts/release-guardian/values-aks.yaml (for example global.imageTag);
+# ArgoCD applies it and Argo Rollouts turns it into an analysed canary.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: release-guardian
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # after Argo Rollouts and Prometheus CRDs
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: release-guardian
+  source:
+    repoURL: https://github.com/RouaSmida/release-guardian.git
+    targetRevision: main
+    path: deploy/charts/release-guardian
+    helm:
+      releaseName: release-guardian
+      valueFiles:
+        - values-aks.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: release-guardian
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

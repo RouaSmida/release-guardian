@@ -1,0 +1,17 @@
+# Local kind cluster and the CI end-to-end test: small, fast, with synthetic traffic.
+rollout:
+  pauseAt10: 45s
+  pauseAt50: 30s
+  analysis:
+    interval: 10s
+    initialDelay: 25s
+
+prometheus:
+  scrapeInterval: 5s
+
+anomalyDetector:
+  intervalSeconds: 15
+  minBaselineSamples: 4
+
+loadgen:
+  enabled: true

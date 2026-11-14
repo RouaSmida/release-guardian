@@ -1,0 +1,12 @@
+# AKS / GitOps values, used by the ArgoCD Application.
+# A release is a commit that changes imageTag to a git SHA published by CI.
+global:
+  imageRepository: ghcr.io/rouasmida/release-guardian
+  imageTag: REPLACE_WITH_GIT_SHA
+  imagePullPolicy: IfNotPresent
+
+services:
+  web:
+    autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 5, targetCPUUtilization: 70 }
+  api:
+    autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 5, targetCPUUtilization: 70 }

@@ -1,0 +1,67 @@
+{{- if .Values.anomalyDetector.enabled }}
+{{- $ctx := dict "name" "anomaly-detector" "root" . "tag" .Values.anomalyDetector.imageTag }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-detector
+  labels:
+    {{- include "rg.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rg.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rg.podLabels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: release-guardian
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "rg.podSecurityContext" $ctx | nindent 8 }}
+      containers:
+        - name: anomaly-detector
+          image: {{ include "rg.image" $ctx }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: APP_VERSION
+              value: {{ .Values.anomalyDetector.imageTag | default .Values.global.imageTag | quote }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheus.address | quote }}
+            - name: TARGET_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: SERVICES
+              value: {{ .Values.anomalyDetector.services | quote }}
+            - name: INTERVAL_SECONDS
+              value: {{ .Values.anomalyDetector.intervalSeconds | quote }}
+            - name: RATE_WINDOW
+              value: {{ .Values.rollout.analysis.rateWindow | quote }}
+            - name: BASELINE_WINDOW_MINUTES
+              value: {{ .Values.anomalyDetector.baselineWindowMinutes | quote }}
+            - name: BASELINE_STEP_SECONDS
+              value: {{ .Values.anomalyDetector.baselineStepSeconds | quote }}
+            - name: MIN_BASELINE_SAMPLES
+              value: {{ .Values.anomalyDetector.minBaselineSamples | quote }}
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          # Ready means "the last evaluation cycle could reach Prometheus".
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.anomalyDetector.resources | nindent 12 }}
+          securityContext:
+            {{- include "rg.containerSecurityContext" $ctx | nindent 12 }}
+{{- end }}
