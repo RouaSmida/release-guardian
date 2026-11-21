@@ -17,8 +17,8 @@ jobs:
     env:
       CHART: deploy/charts/release-guardian
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: azure/setup-helm@v4.2.0
+      - uses: actions/checkout@v7.0.1
+      - uses: azure/setup-helm@v5.1.0
         with:
           version: v3.16.2
       - name: Lint with every values file
@@ -32,7 +32,7 @@ jobs:
           helm template release-guardian "$CHART" -n release-guardian > rendered/default.yaml
           helm template release-guardian "$CHART" -n release-guardian -f "$CHART/values-kind.yaml" > rendered/kind.yaml
           helm template release-guardian "$CHART" -n release-guardian -f "$CHART/values-aks.yaml" > rendered/aks.yaml
-      - uses: actions/upload-artifact@v4.4.3
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: rendered-manifests
           path: rendered/
